@@ -29,6 +29,7 @@ import {
   staticFile,
   useCurrentFrame,
   useVideoConfig,
+  Interactive,
 } from "remotion";
 import { loadFont as loadPoppins } from "@remotion/google-fonts/Poppins";
 import { loadFont as loadInter } from "@remotion/google-fonts/Inter";

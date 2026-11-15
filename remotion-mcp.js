@@ -54,7 +54,7 @@ const TOOLS = [
   },
   {
     name: "generate_voiceover",
-    description: "Membuat voiceover suara manusia alami menggunakan ElevenLabs AI (Ultra Realistis) atau Microsoft Neural Voice berbahasa Indonesia dan otomatis menyimpannya ke public/voiceover.mp3.",
+    description: "Membuat voiceover suara manusia alami menggunakan ElevenLabs AI (Ultra Realistis) atau Microsoft Neural Voice berbahasa Indonesia dan otomatis menyimpannya ke public/voiceover.mp3. Masing-masing baris naskah/scene bisa diatur jeda waktu mulai (start), batas durasi (dur), serta kecepatan suaranya (speed / rate) secara individual.",
     inputSchema: {
       type: "object",
       properties: {
@@ -71,16 +71,24 @@ const TOOLS = [
           type: "string",
           description: "ID Suara atau Nama Karakter. Contoh ElevenLabs: 'pNInz6obpgDQGcFmaJgB' (Adam), '21m00Tcm4TlvDq8ikWAM' (Rachel), 'ErXwobaYiN019PkySvjV' (Antoni). Contoh Microsoft: 'id-ID-ArdiNeural', 'id-ID-GadisNeural'.",
         },
+        defaultSpeed: {
+          type: "number",
+          description: "Kecepatan suara default untuk semua scene (contoh: 1.10 untuk +10%, 1.20 untuk +20%) jika segmen tidak menentukan sendiri",
+        },
+        defaultRate: {
+          type: "string",
+          description: "Kecepatan suara default alternatif dalam persen (contoh: '+10%', '+15%', '+20%')",
+        },
         segments: {
           type: "array",
-          description: "Daftar segmen naskah per scene beserta waktu mulai (detik), kecepatan bicara, dan durasi scene.",
+          description: "Daftar segmen naskah per scene. Setiap baris/scene bisa memiliki jeda waktu (start) dan kecepatan suara (speed / rate) sendiri-sendiri!",
           items: {
             type: "object",
             properties: {
               start: { type: "number", description: "Waktu mulai dalam detik untuk mengatur jeda/timing antar scene (contoh: 0.2, 5.5, 18.2)" },
               text: { type: "string", description: "Teks narasi bahasa Indonesia per scene" },
-              speed: { type: "number", description: "Kecepatan bicara (0.8 - 1.25, contoh: 1.1 untuk hook cepat, 1.0 normal, 0.95 santai)" },
-              rate: { type: "string", description: "Kecepatan bicara alternatif (contoh: '+10%', '+15%')" },
+              speed: { type: "number", description: "Kecepatan bicara scene ini (0.7 - 1.25, contoh: 1.20 untuk hook cepat (+20%), 1.0 normal, 1.10 (+10%))" },
+              rate: { type: "string", description: "Kecepatan bicara scene ini dalam persen (contoh: '+10%', '+15%', '+20%')" },
               dur: { type: "number", description: "Batas durasi scene dalam detik (otomatis disesuaikan agar tidak bocor ke scene berikutnya)" },
             },
             required: ["start", "text"],
@@ -158,7 +166,16 @@ async function executeTool(name, args = {}) {
     }
 
     if (name === "generate_voiceover") {
-      const { provider = "microsoft", apiKey, voice = "id-ID-ArdiNeural", voiceId, modelId = "eleven_multilingual_v2", segments } = args;
+      const {
+        provider = "microsoft",
+        apiKey,
+        voice = "id-ID-ArdiNeural",
+        voiceId,
+        modelId = "eleven_multilingual_v2",
+        segments,
+        defaultSpeed,
+        defaultRate,
+      } = args;
       const effectiveApiKey = apiKey || process.env.ELEVENLABS_API_KEY;
       const tempDir = "/tmp/mcp_neural_tts";
       if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
@@ -190,6 +207,11 @@ async function executeTool(name, args = {}) {
             speedVal = Math.max(0.7, Math.min(1.25, seg.speed));
           } else if (typeof seg.rate === "string") {
             const m = seg.rate.match(/([+-]?\d+)/);
+            if (m) speedVal = Math.max(0.7, Math.min(1.25, 1.0 + parseInt(m[1], 10) / 100));
+          } else if (typeof defaultSpeed === "number") {
+            speedVal = Math.max(0.7, Math.min(1.25, defaultSpeed));
+          } else if (typeof defaultRate === "string") {
+            const m = defaultRate.match(/([+-]?\d+)/);
             if (m) speedVal = Math.max(0.7, Math.min(1.25, 1.0 + parseInt(m[1], 10) / 100));
           }
 
@@ -258,7 +280,21 @@ async function executeTool(name, args = {}) {
           const rawOut = path.join(tempDir, `seg_${i}_raw.mp3`);
           const wavOut = path.join(tempDir, `seg_${i}.wav`);
 
-          const res = await tts.toFile(tempDir, seg.text, { rate: seg.rate || "+10%" });
+          let segRate = seg.rate;
+          if (!segRate && typeof seg.speed === "number") {
+            const pct = Math.round((seg.speed - 1.0) * 100);
+            segRate = (pct >= 0 ? "+" : "") + pct + "%";
+          }
+          if (!segRate && defaultRate) {
+            segRate = defaultRate;
+          }
+          if (!segRate && typeof defaultSpeed === "number") {
+            const pct = Math.round((defaultSpeed - 1.0) * 100);
+            segRate = (pct >= 0 ? "+" : "") + pct + "%";
+          }
+          if (!segRate) segRate = "+10%";
+
+          const res = await tts.toFile(tempDir, seg.text, { rate: segRate });
           fs.renameSync(res.audioFilePath, rawOut);
 
           execSync(`"${FFMPEG_BIN}" -y -i "${rawOut}" -ar 44100 -ac 2 "${wavOut}"`, { stdio: "ignore" });
@@ -337,7 +373,7 @@ with wave.open('/tmp/mcp_vo_full.wav', 'wb') as w:
                 fps: 30,
                 durationSeconds: 60,
                 durationFrames: 1800,
-                previewUrl: "https://motion.chost.my.id/KecanduanSosmed",
+                previewUrl: "https://motion.chost.my.id/",
                 hasBgm: fs.existsSync(path.join(PUBLIC_DIR, "bgm.mp3")),
                 hasVoiceover: fs.existsSync(path.join(PUBLIC_DIR, "voiceover.mp3")),
               },
@@ -429,7 +465,7 @@ function readBody(req) {
 }
 
 const SERVER_INSTRUCTIONS =
-  "Kamu adalah Sutradara & Developer AI Video Remotion yang mengontrol pembuatan video pendek motion graphics vertikal di https://motion.chost.my.id/KecanduanSosmed. Gunakan get_root_code untuk membaca seluruh kode animasi dan naskah di Root.tsx, update_root_code untuk mengubah kode dan scene secara live dengan auto-rollback TypeScript, generate_voiceover untuk mengisi suara alami manusia berbahasa Indonesia (Microsoft Neural Voice Ardi/Gadis), get_project_status untuk melihat status video, dan render_video untuk merender ke MP4 siap upload.";
+  "Kamu adalah Sutradara & Developer AI Video Remotion yang mengontrol pembuatan video pendek motion graphics vertikal di https://motion.chost.my.id/. Gunakan get_root_code untuk membaca seluruh kode animasi dan naskah di Root.tsx, update_root_code untuk mengubah kode dan scene secara live dengan auto-rollback TypeScript, generate_voiceover untuk mengisi suara alami manusia berbahasa Indonesia (ElevenLabs AI atau Microsoft Neural Voice) dengan kontrol waktu mulai (start), batas durasi (dur), serta kecepatan suara (speed / rate) per baris naskah/scene, get_project_status untuk melihat status video, dan render_video untuk merender ke MP4 siap upload.";
 
 async function processJsonRpcMessage(msg) {
   if (!msg || typeof msg !== "object") return null;
