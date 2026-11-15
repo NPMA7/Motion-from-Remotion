@@ -8,3 +8,16 @@ import { Config } from "@remotion/cli/config";
 Config.setRspack(true);
 Config.setVideoImageFormat("jpeg");
 Config.setOverwriteOutput(true);
+
+Config.overrideBundlerConfig((currentConfiguration) => {
+  return {
+    ...currentConfiguration,
+    watchOptions: {
+      ...currentConfiguration.watchOptions,
+      ignored: [
+        /(?:^|[\\/])(?:\.git|\.turbo|\.agents|node_modules)[\\/]/,
+        /skills-lock\.json$/,
+      ],
+    },
+  };
+});
